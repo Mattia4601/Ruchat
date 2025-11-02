@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "ruggine-core",
+  "ruggine-server",
+  "ruggine-client-web",
+]
+resolver = "2"

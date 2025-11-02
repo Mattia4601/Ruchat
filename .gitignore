@@ -1,0 +1,21 @@
+# Rust build artifacts
+/target/
+/**/target/
+
+# Trunk/Yew build output
+ruggine-client-web/dist/
+/**/dist/
+
+# Editor/OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs and databases (server-side)
+*.log
+logs/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
