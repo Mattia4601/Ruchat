@@ -26,13 +26,22 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(state));
     // Ottieni l'indirizzo di binding dal env o usa il default
     let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    // converte la stringa bind in un socketAddr -> il tipo della libreria standard che rappresenta host + porta
     let addr: SocketAddr = bind.parse().context("parse BIND_ADDR")?;
     println!("Listening on http://{}", addr);
-    // Crea il listener TCP
+    // Crea il listener TCP, un socket tcp e lo lega all'indirizzo addr
+    /*
+     *Note su comportamento: il TcpListener::bind crea il socket
+     *in modalità non-bloccante (compatibile con Tokio) e ritorna immediatamente quando il bind è completato;
+    */
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .context("bind tcp listener")?;
     // Avvia il server Axum
+    /*
+     *Cosa fa: avvia il server HTTP che accetta connessioni sul listener e instrada
+     * le richieste usando il Router/service creato (app.into_make_service()).
+     */
     axum::serve(listener, app.into_make_service())
         .await
         .context("server shutdown")?;
