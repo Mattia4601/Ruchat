@@ -1864,11 +1864,14 @@ dependencies = [
  "assert_cmd",
  "axum",
  "reqwest",
+ "ruggine-core",
+ "sha2",
  "sqlx",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

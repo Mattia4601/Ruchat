@@ -1,10 +1,9 @@
-use axum::{routing::get, Router, Extension};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use anyhow::Context;
 
 // ri-utilizziamo le funzioni e strutture definite in lib.rs
-use ruggine_server::{build_sqlite_url, connect_pool, run_migrations, health_with_pool, AppState};
+use ruggine_server::{build_sqlite_url, connect_pool, run_migrations, AppState, routes};
 
 
 #[tokio::main]
@@ -19,11 +18,7 @@ async fn main() -> anyhow::Result<()> {
     // Crea lo stato dell'applicazione condiviso
     let state = Arc::new(AppState { pool });
     // Configura le rotte dell'applicazione
-    let app = Router::new()
-        .route("/health", get(|Extension(state): Extension<Arc<AppState>>| async move {
-            health_with_pool(&state.pool).await
-        }))
-        .layer(Extension(state));
+    let app = routes::router(state.clone());
     // Ottieni l'indirizzo di binding dal env o usa il default
     let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     // converte la stringa bind in un socketAddr -> il tipo della libreria standard che rappresenta host + porta

@@ -65,9 +65,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     let stmts = [
         r#"
         CREATE TABLE IF NOT EXISTS users (
-            user_id   TEXT PRIMARY KEY,
-            username  TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            user_id      TEXT PRIMARY KEY,
+            username     TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            token        TEXT,
+            created_at   TEXT NOT NULL
         );"#,
         r#"
         CREATE TABLE IF NOT EXISTS groups (
@@ -112,6 +114,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+pub mod controllers;
+pub mod routes;
 
 /// Controlla lo stato di salute del database tentando di acquisire una connessione dal pool.
 pub async fn health_with_pool(pool: &SqlitePool) -> StatusCode {

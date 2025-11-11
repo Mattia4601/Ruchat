@@ -11,6 +11,9 @@ sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio-native-tls"] }
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+ruggine-core = { path = "../ruggine-core" }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 assert_cmd = "2"
