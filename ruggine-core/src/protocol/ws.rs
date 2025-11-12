@@ -7,7 +7,7 @@
 */
 use serde::{Deserialize, Serialize};
 
-use crate::{error::Error, models::Message};
+use crate::{error::Error, models::{Message, User}};
 
 /// Messaggio WS con envelope { type, payload }.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,6 +19,12 @@ pub enum WsMessage {
     /// Server → Client: evento di nuovo messaggio.
     #[serde(rename = "message")]
     Message(Message),
+    /// Client → Server: autenticazione iniziale.
+    #[serde(rename = "authenticate")]
+    Authenticate(Authenticate),
+    /// Server → Client: autenticazione riuscita.
+    #[serde(rename = "authOk")]
+    AuthOk(User),
     /// Server → Client: riscontro ad un intento (idempotente).
     #[serde(rename = "ack")]
     Ack(Ack),
@@ -36,6 +42,12 @@ pub struct SendMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sent_at: Option<String>, // RFC3339 (opzionale)
+}
+
+/// Payload per autenticazione (C→S)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Authenticate {
+    pub token: String,
 }
 
 /// Stato dell'acknowledgement.

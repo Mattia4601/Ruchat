@@ -2,10 +2,14 @@ use anyhow::Context;
 use axum::http::StatusCode;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
+use dashmap::DashMap;
+use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
+    /// Map of user_id -> sender used to forward messages to connected websocket sessions.
+    pub ws_users: DashMap<String, UnboundedSender<String>>,
 }
 
 // Dato un percorso di file, restituisce un URL SQLite valido. Crea le directory genitrici se non esistono.
