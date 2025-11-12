@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     // Esegui le migrazioni del database
     run_migrations(&pool).await.context("run migrations")?;
     // Crea lo stato dell'applicazione condiviso
-    let state = Arc::new(AppState { pool });
+    let state = Arc::new(AppState { pool, ws_users: dashmap::DashMap::new() });
     // Configura le rotte dell'applicazione
     let app = routes::router(state.clone());
     // Ottieni l'indirizzo di binding dal env o usa il default

@@ -1,5 +1,7 @@
-use axum::{extract::Extension, http::StatusCode, Json};
-use ruggine_core::{protocol::http::{RegisterRequest, RegisterResponse, LoginRequest, LoginResponse}, models::User, utils::now_timestamp};
+use axum::{extract::Extension, http::StatusCode, Json, extract::{Query, WebSocketUpgrade}, response::IntoResponse};
+use axum::extract::ws::{Message, WebSocket};
+use futures_util::{StreamExt, SinkExt};
+use ruggine_core::{protocol::http::{RegisterRequest, RegisterResponse, LoginRequest, LoginResponse}, protocol::ws::{WsMessage, Authenticate}, models::User, utils::now_timestamp};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::sync::Arc;
@@ -50,6 +52,143 @@ pub async fn register(
     let user = User { user_id: user_id.clone(), username: req.username.clone(), created_at };
     let resp = RegisterResponse { user, token };
     Ok((StatusCode::CREATED, Json(resp)))
+}
+
+/// Handler per /ws
+// endpoint che gestisce l'upgrade HTTP→WebSocket
+pub async fn ws_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    ws: WebSocketUpgrade,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let token = params.get("token").cloned();
+    ws.on_upgrade(move |socket| handle_socket(socket, state, token))
+}
+
+async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, token_q: Option<String>) {
+    // Try authenticate via query param first
+    let mut user_opt: Option<User> = None;
+
+    if let Some(token) = token_q {
+        match sqlx::query("SELECT user_id, username, created_at FROM users WHERE token = ?")
+            .bind(&token)
+            .fetch_optional(&state.pool)// esegue la query ritornando un Result<Option<Row>,sqlx::Error>
+            .await
+        {
+            Ok(Some(row)) => {
+                let user_id: String = row.try_get("user_id").unwrap_or_default();
+                let username: String = row.try_get("username").unwrap_or_default();
+                let created_at: String = row.try_get("created_at").unwrap_or_default();
+                user_opt = Some(User { user_id, username, created_at });
+            }
+            Ok(None) => {
+                // invalid token
+            }
+            Err(e) => {
+                let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error(ruggine_core::error::Error { code: "internal_error".to_string(), message: format!("db error: {}", e), details: None })).unwrap())).await;
+                return;
+            }
+        }
+    }
+
+    // If not authenticated via query, wait for first Authenticate message
+    if user_opt.is_none() {
+        // read one message
+        if let Some(Ok(msg)) = socket.next().await { //socket.next().await legge il prossimo message dal websocket stream e ritorna Option<Result<Message, >>
+            if let Message::Text(txt) = msg { // se non è un message text manda errore di tipo auth_required e chiude la connessione
+                /* serde_json::from_str::<WsMessage>(&txt) prova a deserializzare il JSON in l'enum WsMessage */
+                match serde_json::from_str::<WsMessage>(&txt) {
+                    /* Se il messaggio è WsMessage::Authenticate(auth) si prende auth.token e ripete la lookup DB come sopra. */
+                    Ok(WsMessage::Authenticate(auth)) => {
+                        // lookup token
+                        match sqlx::query("SELECT user_id, username, created_at FROM users WHERE token = ?")
+                            .bind(&auth.token)
+                            .fetch_optional(&state.pool)
+                            .await
+                        {
+                            Ok(Some(row)) => {
+                                let user_id: String = row.try_get("user_id").unwrap_or_default();
+                                let username: String = row.try_get("username").unwrap_or_default();
+                                let created_at: String = row.try_get("created_at").unwrap_or_default();
+                                user_opt = Some(User { user_id, username, created_at });
+                            }
+                            Ok(None) => {
+                                // invalid token
+                            }
+                            Err(e) => {
+                                let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error(ruggine_core::error::Error { code: "internal_error".to_string(), message: format!("db error: {}", e), details: None })).unwrap())).await;
+                                return;
+                            }
+                        }
+                    }
+                    _ => {
+                        // unexpected message
+                        let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error(ruggine_core::error::Error { code: "auth_required".to_string(), message: "expected Authenticate message".to_string(), details: None })).unwrap())).await;
+                        return;
+                    }
+                }
+            } else {
+                // non-text first message
+                let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error(ruggine_core::error::Error { code: "auth_required".to_string(), message: "expected text Authenticate message".to_string(), details: None })).unwrap())).await;
+                return;
+            }
+        } else {
+            // connection closed or error
+            return;
+        }
+    }
+
+    // if still none -> auth failed
+    let user = match user_opt {
+        Some(u) => u,
+        None => {
+            let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::Error(ruggine_core::error::Error { code: "unauthorized".to_string(), message: "invalid token".to_string(), details: None })).unwrap())).await;
+            return;
+        }
+    };
+
+    // Register sender for this user
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    state.ws_users.insert(user.user_id.clone(), tx.clone());
+
+    // Send AuthOk
+    let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::AuthOk(user.clone())).unwrap())).await;
+
+    // Split socket into sink/stream
+    let (mut sender, mut receiver) = socket.split();
+
+    // Task: forward messages from rx -> websocket
+    let forward_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if sender.send(Message::Text(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Task: read incoming messages and (for now) ignore or log SendMessage
+    while let Some(Ok(msg)) = receiver.next().await {
+        match msg {
+            Message::Text(t) => {
+                if let Ok(parsed) = serde_json::from_str::<WsMessage>(&t) {
+                    match parsed {
+                        WsMessage::SendMessage(sm) => {
+                            tracing::info!("received sendMessage from {}: group {}", user.user_id, sm.group_id);
+                            // For now we don't implement broadcasting; just ack could be added here.
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    // cleanup
+    state.ws_users.remove(&user.user_id);
+    // ensure forward task ends
+    let _ = forward_task.await;
 }
 
 /// Handler per POST /api/login

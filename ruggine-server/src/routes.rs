@@ -9,6 +9,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/health", get(|Extension(state): Extension<Arc<AppState>>| async move {
             health_with_pool(&state.pool).await
         }))
+        .route("/ws", get(controllers::ws_handler))
         .route("/api/register", post(controllers::register))
         .route("/api/login", post(controllers::login))
         .layer(Extension(state))
