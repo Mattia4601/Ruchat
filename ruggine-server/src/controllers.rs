@@ -55,7 +55,6 @@ pub async fn register(
 }
 
 /// Handler per /ws
-// endpoint che gestisce l'upgrade HTTP→WebSocket
 pub async fn ws_handler(
     Extension(state): Extension<Arc<AppState>>,
     ws: WebSocketUpgrade,
@@ -72,7 +71,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, token_q: Opt
     if let Some(token) = token_q {
         match sqlx::query("SELECT user_id, username, created_at FROM users WHERE token = ?")
             .bind(&token)
-            .fetch_optional(&state.pool)// esegue la query ritornando un Result<Option<Row>,sqlx::Error>
+            .fetch_optional(&state.pool)
             .await
         {
             Ok(Some(row)) => {
@@ -94,11 +93,9 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, token_q: Opt
     // If not authenticated via query, wait for first Authenticate message
     if user_opt.is_none() {
         // read one message
-        if let Some(Ok(msg)) = socket.next().await { //socket.next().await legge il prossimo message dal websocket stream e ritorna Option<Result<Message, >>
-            if let Message::Text(txt) = msg { // se non è un message text manda errore di tipo auth_required e chiude la connessione
-                /* serde_json::from_str::<WsMessage>(&txt) prova a deserializzare il JSON in l'enum WsMessage */
+        if let Some(Ok(msg)) = socket.next().await {
+            if let Message::Text(txt) = msg {
                 match serde_json::from_str::<WsMessage>(&txt) {
-                    /* Se il messaggio è WsMessage::Authenticate(auth) si prende auth.token e ripete la lookup DB come sopra. */
                     Ok(WsMessage::Authenticate(auth)) => {
                         // lookup token
                         match sqlx::query("SELECT user_id, username, created_at FROM users WHERE token = ?")
@@ -147,7 +144,9 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, token_q: Opt
         }
     };
 
-    // Register sender for this user
+    // Register sender per questa sessione WebSocket.
+    // `tx` è un `UnboundedSender<String>` che altre parti del server possono clonare e usare
+    // per inviare messaggi a questo client (server -> client). 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     state.ws_users.insert(user.user_id.clone(), tx.clone());
 
@@ -155,6 +154,9 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, token_q: Opt
     let _ = socket.send(Message::Text(serde_json::to_string(&WsMessage::AuthOk(user.clone())).unwrap())).await;
 
     // Split socket into sink/stream
+    /* socket.split() divide l'oggetto WebSocket in due metà indipendenti:
+        sender (un Sink) usato per inviare messaggi verso il client,
+        receiver (uno Stream) usato per ricevere messaggi dal client. */
     let (mut sender, mut receiver) = socket.split();
 
     // Task: forward messages from rx -> websocket
